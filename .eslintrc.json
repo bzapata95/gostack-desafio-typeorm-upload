@@ -28,6 +28,8 @@
     "prettier/prettier": "error",
     "class-methods-use-this": "off",
     "@typescript-eslint/camelcase": "off",
+    "@typescript-eslint/no-plusplus": "off",
+    "no-plusplus": [2, { "allowForLoopAfterthoughts": true }],
     "@typescript-eslint/no-unused-vars": ["error", {
       "argsIgnorePattern": "_"
     }],
