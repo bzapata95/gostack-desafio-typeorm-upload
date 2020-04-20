@@ -1,59 +1,90 @@
+import { getCustomRepository, In, getRepository } from 'typeorm';
 import csvParse from 'csv-parse';
 import fs from 'fs';
 import path from 'path';
 
 import Transaction from '../models/Transaction';
+import TransactionRepository from '../repositories/TransactionsRepository';
+import Category from '../models/Category';
 import uploadConfig from '../config/upload';
-import CreateTransactionService from './CreateTransactionService';
 
 interface Request {
   importFilename: string;
 }
+
+interface CSVTransaction {
+  title: string;
+  type: 'income' | 'outcome';
+  value: number;
+  category: string;
+}
 class ImportTransactionsService {
   async execute({ importFilename }: Request): Promise<Transaction[]> {
-    const pathCsv = path.join(uploadConfig.directory, importFilename);
-    const createTransaction = new CreateTransactionService();
+    const categoriesRepository = getRepository(Category);
+    const transactionRepository = getCustomRepository(TransactionRepository);
 
-    const request = await new Promise<Transaction[]>((resolve, reject) => {
-      const Arraytransactions: Transaction[] = [];
-      fs.createReadStream(pathCsv)
-        .pipe(csvParse({ delimiter: ',', columns: true, trim: true }))
-        .on('data', async data => {
-          Arraytransactions.push(data);
-        })
-        .on('error', () => reject)
-        .on('end', () => {
-          resolve(Arraytransactions);
-        });
+    const pathCsv = path.join(uploadConfig.directory, importFilename);
+
+    const contactsReadStream = fs.createReadStream(pathCsv);
+
+    const parsers = csvParse({ delimiter: ',', columns: true, trim: true });
+
+    const transactions: CSVTransaction[] = [];
+    const categories: string[] = [];
+
+    const parseCSV = contactsReadStream.pipe(parsers);
+
+    parseCSV.on('data', async line => {
+      const { title, type, value, category } = line;
+
+      if (!title || !type || !value) return;
+
+      categories.push(category);
+      transactions.push({ title, type, value, category });
     });
 
-    const total = await request;
+    await new Promise(resolve => parseCSV.on('end', resolve));
 
-    async function getTransactions(
-      totals: Array<Record<string, any>>,
-    ): Promise<Transaction[]> {
-      const results: Transaction[] = [];
+    const existentCategories = await categoriesRepository.find({
+      where: {
+        title: In(categories),
+      },
+    });
 
-      /* eslint-disable no-await-in-loop */
-      /* eslint-disable no-restricted-syntax */
-      for (const data of totals) {
-        const transaction = await createTransaction.execute({
-          title: data.title,
-          type: data.type,
-          value: data.value,
-          category: data.category,
-        });
-        results.push(transaction);
-      }
-      /* eslint-disable no-await-in-loop */
-      /* eslint-disable no-restricted-syntax */
+    const existentCategoriesTitles = existentCategories.map(
+      (category: Category) => category.title,
+    );
 
-      return Promise.all(results);
-    }
+    const addCategoyTitles = categories
+      .filter(category => !existentCategoriesTitles.includes(category))
+      .filter((value, index, self) => self.indexOf(value) === index);
 
-    const transactions = await getTransactions(total);
+    const newCategories = categoriesRepository.create(
+      addCategoyTitles.map(title => ({
+        title,
+      })),
+    );
 
-    return transactions;
+    await categoriesRepository.save(newCategories);
+
+    const finalCategories = [...newCategories, ...existentCategories];
+
+    const createdTransactions = transactionRepository.create(
+      transactions.map(transaction => ({
+        title: transaction.title,
+        type: transaction.type,
+        value: transaction.value,
+        category: finalCategories.find(
+          category => category.title === transaction.category,
+        ),
+      })),
+    );
+
+    await transactionRepository.save(createdTransactions);
+
+    await fs.promises.unlink(pathCsv);
+
+    return createdTransactions;
   }
 }
 

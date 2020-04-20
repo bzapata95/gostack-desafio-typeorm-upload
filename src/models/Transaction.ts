@@ -18,18 +18,18 @@ class Transaction {
   @Column()
   title: string;
 
-  @Column('enum')
+  @Column()
   type: string;
 
-  @Column('int4')
+  @Column('decimal')
   value: number;
-
-  @Column()
-  category_id: string;
 
   @OneToOne(() => Category)
   @JoinColumn({ name: 'category_id' })
   category: Category;
+
+  @Column()
+  category_id: string;
 
   @CreateDateColumn()
   created_at: Date;
